@@ -7,6 +7,7 @@
 <script type="importmap">
 {"imports": {
   "@noble/curves/secp256k1": "https://esm.sh/@noble/curves@1.9.7/secp256k1",
+  "@noble/curves/utils": "https://esm.sh/@noble/curves@1.9.7/utils",
   "@noble/hashes/sha2": "https://esm.sh/@noble/hashes@1.8.0/sha2",
   "@scure/base": "https://esm.sh/@scure/base@1.2.6"
 }}
@@ -52,7 +53,6 @@ summary { cursor: pointer; }
 details > * + * { margin-top: .75rem; }
 ul { list-style: none; padding: 0; font-size: .875rem; font-variant-numeric: tabular-nums; }
 li { display: flex; justify-content: space-between; padding: .2rem 0; }
-li span + span { color: var(--mute); }
 </style>
 
 <main>
@@ -69,6 +69,7 @@ li span + span { color: var(--mute); }
 
   <div id="wallet" class="panel" hidden>
     <p class="bal"><span id="bal">0</span> <small>sats</small></p>
+    <p id="bal-fiat" class="mute"></p>
     <p id="pending" class="mute"></p>
 
     <nav class="tabs">
@@ -78,7 +79,7 @@ li span + span { color: var(--mute); }
 
     <div id="receive" class="panel">
       <div class="pill">
-        <button aria-pressed="true" data-addr="ark">Ark</button>
+        <button aria-pressed="true" data-addr="ark">Arkade</button>
         <button aria-pressed="false" data-addr="btc">Bitcoin</button>
       </div>
       <div class="card">
@@ -88,7 +89,7 @@ li span + span { color: var(--mute); }
     </div>
 
     <form id="send" class="panel" hidden novalidate>
-      <label>To<input id="to" placeholder="Ark or bitcoin address" autocomplete="off" spellcheck="false"></label>
+      <label>To<input id="to" placeholder="Arkade or bitcoin address" autocomplete="off" spellcheck="false"></label>
       <p id="to-hint" class="mute"></p>
       <label>Amount
         <span class="row"><input id="amount" inputmode="numeric" placeholder="sats" autocomplete="off"><button type="button" class="quiet" id="max">Max</button></span>
@@ -114,8 +115,11 @@ const $ = (id) => document.getElementById(id)
 const sats = (n) => n.toLocaleString('en-US')
 const KEY = 'simplestwallet.secret'
 const store = (f) => { try { return f(localStorage) } catch {} }
-const inTime = (s) => (s < 3600 ? `${Math.ceil(s / 60)} min` : s < 172800 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} days`)
-let w, addrKind = 'ark', last = '', vtxos = [], spendable = 0, max = 0
+const usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
+let price = 0 // dollars per bitcoin, 0 until mempool.space answers: amounts then show in sats only
+const fiat = (n) => (price ? usd.format((n * price) / 1e8) : '')
+const amt = (n) => `${sats(n)} sats${price ? ` (${fiat(n)})` : ''}`
+let w, addrKind = 'ark', last = '', vtxos = [], total = 0, max = 0
 
 const say = (id, text, bad) => Object.assign($(id), { textContent: text, className: bad ? 'err' : 'mute' })
 const note = (text, bad) => say('note', text, bad)
@@ -138,9 +142,17 @@ async function open(secret, created) {
     $('backup-note').textContent = 'Save this key now: it is the only way to restore this wallet.'
   }
   showAddress()
+  getPrice()
+  setInterval(getPrice, 600_000)
   await refresh()
   setInterval(() => document.hidden || refresh(), 4000)
   document.addEventListener('visibilitychange', () => document.hidden || refresh())
+}
+
+async function getPrice() {
+  try { price = (await fetch('https://mempool.space/api/v1/prices').then((r) => r.json())).USD } catch { return }
+  last = ''
+  refresh()
 }
 
 async function refresh() {
@@ -152,16 +164,15 @@ async function refresh() {
   last = key
   const { deposits } = coins
   vtxos = coins.vtxos
-  const total = vtxos.reduce((n, v) => n + v.amount, 0)
+  total = vtxos.reduce((n, v) => n + v.amount, 0)
   const arriving = deposits.reduce((n, v) => n + v.amount, 0)
-  spendable = w.spendable(vtxos).reduce((n, v) => n + v.amount, 0)
   $('bal').textContent = sats(total)
-  $('pending').textContent = arriving ? `${sats(arriving)} sats arriving from bitcoin` : total ? '' : 'Receive some bitcoin to get started.'
+  $('bal-fiat').textContent = fiat(total)
+  $('pending').textContent = arriving ? `${amt(arriving)} arriving from bitcoin` : total ? '' : 'Receive some bitcoin to get started.'
   $('coins-sum').textContent = vtxos.length ? `${vtxos.length} coin${vtxos.length > 1 ? 's' : ''}` : 'No coins'
   $('coins').replaceChildren(...vtxos.map((v) => {
     const li = document.createElement('li')
-    const due = v.expiresAt - w.config.renewalWindow - Date.now() / 1000
-    li.append(...[`${sats(v.amount)} sats`, due > 0 ? `renews in ${inTime(due)}` : 'renewing'].map((t) => Object.assign(document.createElement('span'), { textContent: t })))
+    li.textContent = amt(v.amount)
     return li
   }))
   check()
@@ -170,7 +181,7 @@ async function refresh() {
 function showAddress() {
   const ark = addrKind === 'ark'
   $('addr').textContent = ark ? w.address : w.boardingAddress
-  $('addr-hint').textContent = ark ? 'For Ark wallets: arrives at once.' : 'For any bitcoin wallet: joins your balance after one confirmation.'
+  $('addr-hint').textContent = ark ? 'For Arkade wallets: arrives at once.' : 'For any bitcoin wallet: joins your balance after one confirmation.'
   document.querySelectorAll('[data-addr]').forEach((b) => b.setAttribute('aria-pressed', b.dataset.addr === addrKind))
 }
 
@@ -182,20 +193,20 @@ function check() {
     try {
       offchain = destination(to, w.network, w.server).offchain
     } catch (e) {
-      if (to.length > 20) problem = e.message.includes('server') ? 'This address belongs to another Ark server.' : 'This is not a valid address.'
+      if (to.length > 20) problem = e.message.includes('server') ? 'This address belongs to another Arkade server.' : 'This is not a valid address.'
     }
   }
   const fee = offchain ? 0 : w.config.withdrawFeeMax
-  max = Math.max(0, spendable - fee)
+  max = Math.max(0, total - fee)
   if (!problem && $('amount').value && !(Number.isInteger(amount) && amount > 0)) problem = 'Enter a whole number of sats.'
-  if (!problem && amount > max) problem = `You can send up to ${sats(max)} sats right now.`
+  if (!problem && amount > max) problem = `You can send up to ${amt(max)} right now.`
   if (!problem && amount > 0) try { plan = w.plan(vtxos, amount, offchain) } catch (e) { problem = e.message }
   // the button names the amount the contract checks: a leftover too small to keep is paid too
   const extra = plan ? plan.amount - amount : 0
-  $('to-hint').textContent = [fee && `Leaves with the next batch. Fees up to ${sats(fee)} sats.`, extra && `Includes ${sats(extra)} sats left over, too few to keep.`].filter(Boolean).join(' ')
+  $('to-hint').textContent = [fee && `Leaves with the next batch. Fees up to ${amt(fee)}.`, extra && `Includes ${amt(extra)} left over, too few to keep.`].filter(Boolean).join(' ')
   const ok = to && plan && !problem
   $('go').disabled = !ok
-  $('go').textContent = ok ? `Send ${sats(plan.amount)} sats` : 'Send'
+  $('go').textContent = ok ? `Send ${amt(plan.amount)}` : 'Send'
   return problem
 }
 
@@ -216,7 +227,7 @@ async function send(e) {
       if (s.status !== 'active') throw new Error(`The send ${s.status}${s.error ? `: ${s.error}` : ''}. Nothing was sent.`)
     }
     $('send').reset()
-    sendNote(`Sent ${sats(spend.amount)} sats.`)
+    sendNote(`Sent ${amt(spend.amount)}.`)
     refresh()
   } catch (err) {
     sendNote(err.message, true)

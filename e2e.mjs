@@ -50,15 +50,11 @@ function read(p) {
   return JSON.parse(readFileSync(new URL(p, import.meta.url)))
 }
 
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms))
-}
-
 async function until(what, check, seconds = 180) {
   for (let i = 0; i < seconds / 2; i++) {
     const got = await check()
     if (got) return got
-    await sleep(2000)
+    await new Promise((r) => setTimeout(r, 2000))
   }
   throw new Error(`timed out: ${what}`)
 }

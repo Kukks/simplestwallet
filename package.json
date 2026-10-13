@@ -4,8 +4,7 @@
   "type": "module",
   "scripts": {
     "e2e": "node e2e.mjs",
-    "serve": "python3 -m http.server 8000",
-    "config": "node -e \"const n = process.env.NETWORK || 'regtest', c = require('./networks.json')[n]; if (!c) throw new Error('unknown network ' + n); require('fs').writeFileSync('config.json', JSON.stringify(c, null, 2) + '\\n')\""
+    "serve": "python3 -m http.server 8000"
   },
   "dependencies": {
     "@noble/curves": "1.9.7",

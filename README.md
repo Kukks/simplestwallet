@@ -5,7 +5,7 @@ signs short messages. [delegatee](https://github.com/arkade-os/delegatee)
 builds every transaction, and the emulator co-signs one only when the
 contract below accepts it.
 
-- **Receive:** show an Ark address, or a bitcoin address that delegatee boards
+- **Receive:** show an Arkade address, or a bitcoin address that delegatee boards
   automatically.
 - **Send:** sign one message per spent coin and `POST /v1/spend`.
 - **Renew:** nothing to do; delegatee renews the coins before they expire.
@@ -23,8 +23,8 @@ npm run e2e        # board, send, exit to bitcoin, send everything, spend severa
 
 ## Networks
 
-`networks.json` holds a preset per network; `NETWORK=mutinynet npm run config`
-writes it to `config.json` (regtest by default). The page reads
+`networks.json` holds a preset per network; `jq .mutinynet networks.json > config.json`
+switches to one (the committed `config.json` is regtest). The page reads
 `config.json`.
 
 ## Deploy
@@ -52,7 +52,7 @@ It needs a delegatee with the spend endpoint at that network's `delegateeUrl`.
 |---|---|
 | `exit` | `<exitDelay> CSV DROP <owner> CHECKSIG`: unilateral exit |
 | `renew` | through any batch, back to the same script, within `renewalWindow` of expiry, paying at most `maxFee` |
-| `send` | in an Ark transaction, as the owner authorized |
+| `send` | in an Arkade transaction, as the owner authorized |
 | `withdraw` | in a batch, to a bitcoin output, as the owner authorized |
 
 ### The story
@@ -61,7 +61,7 @@ It needs a delegatee with the spend endpoint at that network's `delegateeUrl`.
 
 ```mermaid
 flowchart LR
-  sender["sender<br/>Ark payment, or bitcoin boarded by delegatee"] --> fund["receive<br/>pays the address"]
+  sender["sender<br/>Arkade payment, or bitcoin boarded by delegatee"] --> fund["receive<br/>pays the address"]
   fund --> coin["coin<br/>SimpleWallet(owner, exitDelay, renewalWindow, maxFee)"]
 ```
 
@@ -115,7 +115,7 @@ SHA256(tag ‖ prev_txid ‖ vout:u32le ‖ amount:u64le ‖ change:u64le ‖ va
 - `tag` is `simplestwallet/send/v1` or `simplestwallet/withdraw/v1`, so a send
   authorization never pays out on chain.
 - `prev_txid` is in internal byte order. For `send` it is the checkpoint
-  transaction arkd places between the coin and the Ark transaction: the wallet
+  transaction arkd places between the coin and the Arkade transaction: the wallet
   computes it from arkd's checkpoint tapscript (`checkpointTxid` in
   `wallet.js`), and `vout` is 0.
 - When `change > 0`, output 0 must go back to the same script with at least
@@ -134,7 +134,7 @@ exit leaf of every coin, over `tagged_hash("delegatee/spend", id ‖ expires_at)
 ## Trust and limits
 
 - The wallet checks that the address delegatee derives contains its exit leaf
-  and that every other leaf is a 2-of-2 with the ark server. It does not check
+  and that every other leaf is a 2-of-2 with the Arkade server. It does not check
   that the emulator keys are tweaked correctly. Without the emulator, only the
   unilateral exit remains, and this page has no button for it.
 - A spend ends `done` when its coins are spent, by it or by something else (a

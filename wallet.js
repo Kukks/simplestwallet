@@ -2,28 +2,13 @@
 // No PSBT is ever built here: delegatee builds every transaction, the
 // contract only accepts the ones this key authorized.
 import { secp256k1, schnorr } from '@noble/curves/secp256k1'
+import { bytesToNumberBE as toBig, concatBytes, equalBytes as equal, numberToBytesBE, numberToBytesLE as le, utf8ToBytes as utf8 } from '@noble/curves/utils'
 import { sha256 } from '@noble/hashes/sha2'
 import { bech32, bech32m, hex } from '@scure/base'
 
-const utf8 = (s) => new TextEncoder().encode(s)
-const concat = (...parts) => {
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
-  let i = 0
-  for (const p of parts) {
-    out.set(p, i)
-    i += p.length
-  }
-  return out
-}
-const equal = (a, b) => a.length === b.length && a.every((x, i) => x === b[i])
-const le = (n, size) => {
-  const out = new Uint8Array(size)
-  let v = BigInt(n)
-  for (let i = 0; i < size; i++, v >>= 8n) out[i] = Number(v & 0xffn)
-  return out
-}
-const be64 = (n) => le(n, 8).reverse()
-const toBig = (b) => BigInt('0x' + (hex.encode(b) || '0'))
+// concat also takes plain byte arrays, concatBytes only Uint8Arrays
+const concat = (...parts) => concatBytes(...parts.map((p) => Uint8Array.from(p)))
+const be64 = (n) => numberToBytesBE(n, 8)
 
 // minimal script number, what the contract reads as an int
 function scriptNum(n) {
@@ -104,15 +89,7 @@ export function destination(address, network, server) {
 
 // ---- keys and contract ----
 
-export function newSecret() {
-  return hex.encode(secp256k1.utils.randomPrivateKey())
-}
-
-function keysOf(secret) {
-  const priv = hex.decode(secret)
-  const owner = secp256k1.getPublicKey(priv, true)
-  return { priv, owner, xonly: owner.slice(1) }
-}
+export const newSecret = () => hex.encode(secp256k1.utils.randomPrivateKey())
 
 const exitLeaf = (xonly, delay) => concat(pushNum(sequence(delay)), [0xb2, 0x75, 0x20], xonly, [0xac])
 
@@ -131,15 +108,13 @@ function checkWatch(tapscripts, key, exit, server, owner) {
 
 // ---- authorizations ----
 
-const TAGS = { send: 'simplestwallet/send/v1', withdraw: 'simplestwallet/withdraw/v1' }
-
 // authMessage is what each input's CSFS checks; prevTxid is in internal byte order
 function authMessage(kind, prevTxid, vout, amount, change, validUntil, destScript) {
   const version = destScript[0] === 0 ? 0 : destScript[0] - 0x50
   const program = destScript.slice(2)
   return sha256(
     concat(
-      utf8(TAGS[kind]), prevTxid, le(vout, 4), le(amount, 8), le(change, 8), le(validUntil, 8),
+      utf8(`simplestwallet/${kind}/v1`), prevTxid, le(vout, 4), le(amount, 8), le(change, 8), le(validUntil, 8),
       sha256(concat([version], program)),
     ),
   )
@@ -231,7 +206,9 @@ const vtxoOf = (v) => {
 export class Wallet {
   // docs: { artifact, renewal, boarding } parsed from contract/; config: see config.json
   constructor(secret, config, docs) {
-    Object.assign(this, keysOf(secret))
+    this.priv = hex.decode(secret)
+    this.owner = secp256k1.getPublicKey(this.priv, true)
+    this.xonly = this.owner.slice(1)
     this.config = config
     this.docs = docs
   }
@@ -281,18 +258,12 @@ export class Wallet {
     }
   }
 
-  // spendable leaves out coins about to renew: they would be gone before the spend runs
-  spendable(vtxos) {
-    const soon = Date.now() / 1000 + this.config.renewalWindow + 30
-    return vtxos.filter((v) => !v.expiresAt || v.expiresAt > soon)
-  }
-
   // plan picks the largest coins first; a change below dust joins the payment, so amount can grow
   plan(vtxos, amount, offchain) {
     const feeMax = offchain ? 0 : this.config.withdrawFeeMax
     const picked = []
     let total = 0
-    for (const v of this.spendable(vtxos).sort((a, b) => b.amount - a.amount)) {
+    for (const v of [...vtxos].sort((a, b) => b.amount - a.amount)) {
       if (total >= amount + feeMax) break
       picked.push(v)
       total += v.amount
@@ -344,7 +315,6 @@ export class Wallet {
   async spendStatus(id) {
     const res = await call(this.config.delegateeUrl, `/v1/spend/${id}`)
     const attempts = res.renewals || []
-    const failed = attempts.filter((r) => !r.success)
-    return { status: res.delegation.status, sent: attempts.some((r) => r.success), error: failed.length ? failed[0].error : '' }
+    return { status: res.delegation.status, sent: attempts.some((r) => r.success), error: attempts.find((r) => !r.success)?.error || '' }
   }
 }
